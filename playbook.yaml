@@ -68,3 +68,5 @@
       value: "true"
       vtype: boolean
 
+  - name: Reboot Host
+    ansible.builtin.reboot:
