@@ -1,6 +1,6 @@
 ---
 - name: Durcissement Debian 13
-  hosts: all
+  hosts: servers
   become: true
 
   tasks:
