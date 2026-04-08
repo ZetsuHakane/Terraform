@@ -1,0 +1,159 @@
+---
+- name: Hardening Debian Server
+  hosts: all
+  become: true
+
+  vars:
+    ssh_port: 22
+    tailscale_authkey: ""  # optionnel
+    fail2ban_maxretry: 5
+    fail2ban_bantime: 3600
+    fail2ban_findtime: 600
+
+  tasks:
+
+  # Update
+  - name: Update apt cache
+    apt:
+      update_cache: yes
+      cache_valid_time: 3600
+
+  - name: Upgrade system
+    apt:
+      upgrade: dist
+
+  # ssh hardening
+  - name: Disable root SSH login
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^PermitRootLogin'
+      line: 'PermitRootLogin no'
+      create: yes
+
+  - name: Disable SSH password authentication
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^PasswordAuthentication'
+      line: 'PasswordAuthentication no'
+      create: yes
+
+  - name: Ensure SSH uses defined port
+    lineinfile:
+      path: /etc/ssh/sshd_config
+      regexp: '^#?Port'
+      line: "Port {{ ssh_port }}"
+
+  - name: Restart SSH service
+    service:
+      name: ssh
+      state: restarted
+
+  # fire-wall
+  - name: Install UFW
+    apt:
+      name: ufw
+      state: present
+
+  - name: Default deny incoming
+    ufw:
+      direction: incoming
+      policy: deny
+
+  - name: Default allow outgoing
+    ufw:
+      direction: outgoing
+      policy: allow
+
+  - name: Allow SSH
+    ufw:
+      rule: allow
+      port: "{{ ssh_port }}"
+      proto: tcp
+
+  - name: Enable UFW
+    ufw:
+      state: enabled
+
+  # fail2ban
+  - name: Install fail2ban
+    apt:
+      name: fail2ban
+      state: present
+
+  - name: Configure fail2ban jail.local
+    copy:
+      dest: /etc/fail2ban/jail.local
+      content: |
+        [sshd]
+        enabled = true
+        port = {{ ssh_port }}
+        maxretry = {{ fail2ban_maxretry }}
+        findtime = {{ fail2ban_findtime }}
+        bantime = {{ fail2ban_bantime }}
+    notify: restart fail2ban
+
+  # unattended-upgrades
+  - name: Install unattended-upgrades
+    apt:
+      name: unattended-upgrades
+      state: present
+
+  - name: Enable automatic updates
+    copy:
+      dest: /etc/apt/apt.conf.d/20auto-upgrades
+      content: |
+        APT::Periodic::Update-Package-Lists "1";
+        APT::Periodic::Unattended-Upgrade "1";
+
+  # tailscale
+  - name: Install Tailscale
+    shell: curl -fsSL https://tailscale.com/install.sh | sh
+    args:
+      creates: /usr/bin/tailscale
+
+  - name: Start Tailscale (if authkey provided)
+    command: tailscale up --authkey {{ tailscale_authkey }}
+    when: tailscale_authkey != ""
+
+  # lynis
+  - name: Install Lynis
+    apt:
+      name: lynis
+      state: present
+
+  - name: Run Lynis audit
+    command: lynis audit system
+    register: lynis_output
+    changed_when: false
+
+  - name: Save Lynis report
+    copy:
+      content: "{{ lynis_output.stdout }}"
+      dest: /var/log/lynis-report.txt
+
+  # Audit
+  - name: Install OpenSCAP tools
+    apt:
+      name:
+        - libopenscap8
+        - scap-security-guide
+      state: present
+
+  - name: Run OpenSCAP scan
+    command: >
+      oscap xccdf eval
+      --profile xccdf_org.ssgproject.content_profile_standard
+      --results /tmp/openscap-results.xml
+      /usr/share/xml/scap/ssg/content/ssg-debian.xml
+    ignore_errors: yes
+
+  # Clean
+  - name: Remove unused packages
+    apt:
+      autoremove: yes
+
+  handlers:
+    - name: restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted
