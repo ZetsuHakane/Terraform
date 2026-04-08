@@ -1,9 +1,25 @@
 ---
+
+#######
+#Executer avec la commande : ansible-playbook playbook.yaml -i inventory.ini -k -K
+# -k = mot de passe session ssh 
+# -K = mot de passe "become_user" pour  "su"
+#######
+
 - name: Durcissement Debian 13
   hosts: servers
   become: true
+  become_method: su
+  become_user: root
+  become_flags: '-'
 
   tasks:
+
+  - name: Install Sudo
+    ansible.builtin.apt:
+      name: sudo
+
+
   - name: Update and upgrade apt packages
     apt:
       upgrade: yes
@@ -17,7 +33,7 @@
 
   - name: Copy ssh key
     ansible.posix.authorized_key:
-      user: charlie
+      user: benjamin
       key: "{{ lookup('file', '/home/benjamin/.ssh/id_ed25519.pub') }}"
 
   - name: Disable SSH Psswd Login
@@ -26,7 +42,7 @@
            regexp: '^#PasswordAuthentication'
            line: "PasswordAuthentication no"
 
-  - name: Installer OpenSSH Server
+  - name: Install UFW
     ansible.builtin.apt:
       name: ufw
 
@@ -35,8 +51,8 @@
       rule: allow
       name: OpenSSH
 
-  -name: UFW deny all incoming traffic
-    community.general.ufw
+  - name: UFW deny all incoming traffic
+    community.general.ufw:
       direction: incoming
       default: deny
 
