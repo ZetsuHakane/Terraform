@@ -1,2 +1,6 @@
 inventory.ini
 ansible.cfg
+terraform.tfvars 
+.terraform
+.terraform.lock.hcl
+.terraform.tfstate
