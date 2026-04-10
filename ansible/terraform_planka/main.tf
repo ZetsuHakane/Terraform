@@ -20,6 +20,18 @@ resource "azurerm_subnet" "container_subnet" {
   resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.vnet.name
   address_prefixes     = ["10.0.1.0/24"]
+  
+  delegation {
+      name = "containerapps-delegation"
+ 
+      service_delegation {
+         name = "Microsoft.App/environments"
+ 
+         actions = [
+           "Microsoft.Network/virtualNetworks/subnets/join/action",
+         ]
+      }
+   }
 }
 
 # Postgres subnet 
@@ -27,10 +39,10 @@ resource "azurerm_subnet" "subnet" {
   name                 = var.subnet_name
   resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.vnet.name
-  address_prefixes     = ["10.0.1.0/24"]
+  address_prefixes     = ["10.0.2.0/24"]
 
   delegation {
-    name = "postgres-flexible-delegation"
+    name = "postgres-delegation"
 
     service_delegation {
       name = "Microsoft.DBforPostgreSQL/flexibleServers"
@@ -91,8 +103,8 @@ resource "azurerm_container_app" "app" {
     container {
       name   = var.container_app_name
       image  = var.container_image
-      cpu    = 0.25
-      memory = "0.Gi"
+      cpu    = 0.5
+      memory = "1.0Gi"
 
       env {
         name  = "DATABASE_URL"
