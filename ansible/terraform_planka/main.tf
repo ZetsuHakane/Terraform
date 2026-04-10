@@ -14,11 +14,44 @@ resource "azurerm_virtual_network" "vnet" {
   address_space       = ["10.0.0.0/16"]
 }
 
+# Subnet conteneur app
+resource "azurerm_subnet" "container_subnet" {
+  name                 = "container-subnet"
+  resource_group_name  = azurerm_resource_group.rg.name
+  virtual_network_name = azurerm_virtual_network.vnet.name
+  address_prefixes     = ["10.0.1.0/24"]
+}
+
+# Postgres subnet 
 resource "azurerm_subnet" "subnet" {
   name                 = var.subnet_name
   resource_group_name  = azurerm_resource_group.rg.name
   virtual_network_name = azurerm_virtual_network.vnet.name
   address_prefixes     = ["10.0.1.0/24"]
+
+  delegation {
+    name = "postgres-flexible-delegation"
+
+    service_delegation {
+      name = "Microsoft.DBforPostgreSQL/flexibleServers"
+
+      actions = [
+        "Microsoft.Network/virtualNetworks/subnets/join/action",
+      ]
+    }
+  }
+}
+
+resource "azurerm_private_dns_zone" "dns" {
+  name                = "privatelink.postgres.database.azure.com"
+  resource_group_name = azurerm_resource_group.rg.name
+}
+
+resource "azurerm_private_dns_zone_virtual_network_link" "dns_link" {
+  name                  = "dns-link"
+  resource_group_name   = azurerm_resource_group.rg.name
+  private_dns_zone_name = azurerm_private_dns_zone.dns.name
+  virtual_network_id    = azurerm_virtual_network.vnet.id
 }
 
 # PostgreSQL Flexible Server
@@ -31,14 +64,17 @@ resource "azurerm_postgresql_flexible_server" "postgres" {
   administrator_password        = var.postgres_password
   storage_mb                    = 32768
   delegated_subnet_id           = azurerm_subnet.subnet.id
+  private_dns_zone_id           = azurerm_private_dns_zone.dns.id
   public_network_access_enabled = false
+  sku_name                      = "B_Standard_B1ms"
 }
 
 # Container App Environment
 resource "azurerm_container_app_environment" "env" {
-  name                = "${var.container_app_name}-env"
-  resource_group_name = azurerm_resource_group.rg.name
-  location            = azurerm_resource_group.rg.location
+  name                     = "${var.container_app_name}-env"
+  resource_group_name      = azurerm_resource_group.rg.name
+  location                 = azurerm_resource_group.rg.location
+  infrastructure_subnet_id = azurerm_subnet.container_subnet.id
 }
 
 # Container App
@@ -51,28 +87,27 @@ resource "azurerm_container_app" "app" {
   identity {
     type = "SystemAssigned"
   }
-
   template {
     container {
       name   = var.container_app_name
       image  = var.container_image
       cpu    = 0.25
-      memory = "0.5Gi"
+      memory = "0.Gi"
 
       env {
-        name  = "DATABASE_HOST"
-        value = azurerm_postgresql_flexible_server.postgres.fqdn
+        name  = "DATABASE_URL"
+        value = "postgres://${var.postgres_admin}:${var.postgres_password}@${azurerm_postgresql_flexible_server.postgres.fqdn}:5432/postgres"
       }
+    }
+  }
 
-      env {
-        name  = "DATABASE_USER"
-        value = var.postgres_admin
-      }
+  ingress {
+    external_enabled = true
+    target_port      = 3000
 
-      env {
-        name  = "DATABASE_PASSWORD"
-        value = var.postgres_password
-      }
+    traffic_weight {
+      percentage      = 100
+      latest_revision = true
     }
   }
 }
